@@ -1,0 +1,641 @@
+---
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+
+#################################################
+# Data Science and Business Intelligence Project#
+# Adult Census Income                           #
+# Yixiong Shang                                 #
+#################################################
+
+```{r}
+rm(list = ls())
+library(ISLR)
+library(rpart)
+library(ggplot2)
+library(plyr)
+library(knitr)
+library(scales)
+library(grid)
+library(gridExtra)
+```
+
+```{r}
+# read dataset
+adult <- read.csv("adult.csv", na.strings="?")
+
+# formulate the column name and clean the data
+colnames(adult) <- c("age", "workclass", "fnlwgt", 
+                        "education", "education_num", 
+                        "marital_status", "occupation",
+                        "relationship", "race", "sex", 
+                        "capital_gain", "capital_loss", 
+                        "hours_per_week", "native_country", "income")
+adult <- na.omit(adult)
+head(adult)
+```
+
+```{r}
+# Identifies the factor variables and prints the levels of each categorical variable
+levels_factors <- function(mydata) {
+  col_names <- names(mydata)
+  for (i in 1:length(col_names)) {
+    if (is.factor(mydata[, col_names[i]])) {
+      message(noquote(paste("Covariate ", "*", col_names[i], "*", " with factor levels:", sep = "")))
+      print(levels(mydata[, col_names[i]]))
+    }
+  }
+}
+
+levels_factors(adult)
+```
+
+######################
+# Exploring the Data #
+######################
+
+```{r}
+## The variable ¡°hours_per_week¡± 
+summary(adult)
+summary(adult$hours_per_week)
+
+```
+
+```{r}
+# From the box plot we also observe that there are a lot of outliers
+ggplot(aes(x = factor(0), y = hours_per_week),
+       data = adult) + 
+  geom_boxplot() +
+  stat_summary(fun.y = mean, 
+               geom = 'point', 
+               shape = 19,
+               color = "red",
+               cex = 2) +
+  scale_x_discrete(breaks = NULL) +
+  scale_y_continuous(breaks = seq(0, 100, 5)) + 
+  xlab(label = "") +
+  ylab(label = "Working hours per week") +
+  ggtitle("Box Plot of Working Hours per Week")  
+```
+
+```{r}
+# We will group the working hours in 5 categories which we consider relevant
+adult$hours_w[adult$hours_per_week < 40] <- " less_than_40"
+adult$hours_w[adult$hours_per_week >= 40 & adult$hours_per_week <= 45] <- " between_40_and_45"
+adult$hours_w[adult$hours_per_week > 45 & adult$hours_per_week <= 60  ] <- " between_45_and_60"
+adult$hours_w[adult$hours_per_week > 60 & adult$hours_per_week <= 80  ] <- " between_60_and_80"
+adult$hours_w[adult$hours_per_week > 80] <- " more_than_80"
+
+adult$hours_w <- factor(adult$hours_w,ordered = FALSE,
+                           levels = c(" less_than_40", 
+                                      " between_40_and_45", 
+                                      " between_45_and_60",
+                                      " between_60_and_80",
+                                      " more_than_80"))
+
+summary(adult$hours_w)
+for(i in 1:length(summary(adult$hours_w))){
+  print(round(100*summary(adult$hours_w)[i]/sum(!is.na(adult$hours_w)), 2)) 
+}
+
+```
+
+```{r}
+## The variable ¡°native_country¡±
+levels(adult$native_country)
+
+# Add region
+Asia_East <- c("Cambodia", "China", "Hong", "Laos", "Thailand", "Japan", "Taiwan", "Vietnam")
+Asia_Central <- c("India", "Iran")
+Central_America <- c("Cuba", "Guatemala", "Jamaica", "Nicaragua", 
+                     "Puerto-Rico",  "Dominican-Republic", "El-Salvador", 
+                     "Haiti", "Honduras", "Mexico", "Trinadad&Tobago")
+South_America <- c("Ecuador", "Peru", "Columbia")
+Europe_West <- c("England", "Germany", "Holand-Netherlands", "Ireland", 
+                 "France", "Greece", "Italy", "Portugal", "Scotland")
+Europe_East <- c("Poland", "Yugoslavia", "Hungary")
+
+adult <- mutate(adult, 
+      native_region = ifelse(native_country %in% Asia_East, "East-Asia",
+                      ifelse(native_country %in% Asia_Central, "Central-Asia",
+                      ifelse(native_country %in% Central_America, "Central-America",
+                      ifelse(native_country %in% South_America, "South-America",
+                      ifelse(native_country %in% Europe_West, "Europe-West",
+                      ifelse(native_country %in% Europe_East, "Europe-East",
+                      ifelse(native_country == "United-States", "United-States", "Outlying-US" ))))))))
+
+adult$native_region <- factor(adult$native_region, ordered = FALSE)
+summary(adult$native_country)
+summary(adult$native_region)
+
+```
+
+```{r}
+## The variables ¡°capital_gain¡± and ¡°capital_loss¡±
+summary(adult$capital_gain)
+summary(adult$capital_loss)
+(nrow(subset(adult, adult$capital_gain == 0))/nrow(adult))*100
+(nrow(subset(adult, adult$capital_loss == 0))/nrow(adult))*100
+
+# Too many zeros in the variables ¡°capital_gain¡± and ¡°capital_loss¡± 
+# this can seriously disrupt the analysis.
+
+iqr.gain <- IQR(subset(adult$capital_gain, adult$capital_gain > 0))
+iqr.loss <- IQR(subset(adult$capital_loss, adult$capital_loss > 0))
+q.gain <- quantile(x = subset(adult$capital_gain, adult$capital_gain > 0), 
+                   probs = seq(0, 1, 0.25))
+q.loss <- quantile(x = subset(adult$capital_loss, adult$capital_loss > 0),
+                   probs = seq(0, 1, 0.25))
+kable(x = data.frame(Capital_Gain = q.gain, Capital_Loss = q.loss),
+      caption = "Quantiles of the Nonzero Capital")
+
+adult <- mutate(adult, cap_gain = ifelse(adult$capital_gain < 3464, " Low",
+                                     ifelse(adult$capital_gain >= 3464 & 
+                                            adult$capital_gain <= 14080, " Medium", " High")))
+adult$cap_gain <- factor(adult$cap_gain, ordered = TRUE, levels = c(" Low", " Medium", " High"))
+
+adult <- mutate(adult, cap_loss = ifelse(adult$capital_loss < 1672, " Low",
+                                     ifelse(adult$capital_loss >= 1672 & 
+                                            adult$capital_loss <= 1977, " Medium", " High")))
+adult$cap_loss <- factor(adult$cap_loss, ordered = TRUE, levels = c(" Low", " Medium", " High"))
+
+```
+
+```{r}
+## The Variable ¡°workclass¡±
+
+summary(adult$workclass)
+
+#nobody never-worked
+adult$workclass <- droplevels(adult$workclass)
+levels(adult$workclass)
+
+# explore the clean data
+write.csv(adult, "adult_clean.csv")
+```
+
+#################
+# Data Analysis #
+#################
+
+```{r}
+# incomes
+ggplot(data = adult, mapping = aes(x = adult$income, fill = adult$income)) + 
+  geom_bar(mapping = aes(y = (..count..)/sum(..count..))) +
+  geom_text(mapping = aes(label = scales::percent((..count..)/sum(..count..)),
+                          y = (..count..)/sum(..count..) ), 
+            stat = "count", vjust = -.1) +
+  labs(x = "Income", y = "", fill = "Income") +
+  scale_y_continuous(labels = percent)
+
+# Nonzero ¡°capital_gain¡± and ¡°capital_loss¡±
+ggplot(mapping = aes(x = income, y = capital_gain),
+        data = subset(adult, adult$capital_gain > 0)) + geom_boxplot() +
+  stat_summary(fun.y = mean, geom = 'point', shape = 19, color = "red", cex = 2) +
+  coord_cartesian(ylim = c(0, 30000)) +
+  scale_y_continuous(breaks = seq(0, 30000, 1500)) +
+  labs(x = "Income", y = "Capital Gain") +
+  ggtitle("Box Plot of Nonzero Capital Gain by Income") 
+
+ggplot(mapping = aes(x = income, y = capital_loss),
+       data = subset(adult, adult$capital_loss > 0)) + geom_boxplot() +
+  stat_summary(fun.y = mean, geom = 'point', shape = 19, color = "red", cex = 2) +
+  coord_cartesian(ylim = c(0, 3000)) +
+  scale_y_continuous(breaks = seq(0, 3000, 200)) +
+  labs(x = "Income", y = "Capital Loss") +
+  ggtitle("Box Plot of Nonzero Capital Loss by Income") 
+
+```
+
+```{r}
+# ¡°cap_gain¡± and ¡°cap_loss¡±
+lg_cap.gain <- lapply(X = levels(adult$income), FUN = function(v){
+  df <- subset(adult, adult$income == v)    
+  df <- within(df, cap_gain <- factor(cap_gain,levels = names(sort(table(cap_gain),decreasing = TRUE))))
+  ggplot(data = df, aes(x = cap_gain, fill = cap_gain)) + 
+    geom_bar(aes(y = (..count..)/sum(..count..))) +
+    geom_text(aes(label = scales::percent((..count..)/sum(..count..)),y = (..count..)/sum(..count..) ), 
+              stat = "count",vjust = -.1) +
+    labs(x = "Capital Gain",  y = "", fill = "Capital Gain") +
+    theme(legend.position = 'none') +
+    ggtitle(paste("Income", v, sep = "")) +  
+    scale_y_continuous(labels = percent) })
+grid.arrange(grobs = lg_cap.gain, ncol = 2)
+
+```
+
+```{r}
+# age
+summary(adult$age)
+
+# Density of age
+ggplot(data = adult, aes(age, fill = income)) + 
+  geom_density(alpha = 0.2) +
+  scale_x_continuous(breaks = seq(0, 95, 5))
+
+# Histogram of age
+ggplot(data = adult, mapping = aes(x = age)) + 
+  geom_histogram(binwidth = 5, color = "black", fill = "lightblue", alpha = 0.6) +
+  scale_x_continuous(breaks = seq(0, 95, 5)) + 
+  facet_wrap(~income) +
+  ggtitle("Histogram of Age by Income") 
+
+ggplot(aes(x = age, y = hours_per_week), data = adult) + 
+  geom_line(mapping = aes(color = sex), stat = 'summary', fun.y = mean) +
+  geom_smooth(mapping = aes(color = sex)) + 
+  scale_x_continuous(breaks = seq(10, 100, 5)) +
+  scale_y_continuous(breaks = seq(0, 55, 5)) +  
+  labs(x = "Age", y = "Mean Hours per Week") +
+  ggtitle("Age vs. Mean Hours per Week by Gender")
+
+```
+
+```{r}
+# hours_per_Week
+ggplot(mapping = aes(x = age, y = hours_per_week), data = adult) + 
+  geom_line(mapping = aes(color = income), stat = 'summary', fun.y = mean) +
+  geom_smooth(mapping = aes(color = income)) +
+  scale_x_continuous(breaks = seq(10, 100, 5)) +
+  labs(x = "Age", y = "Mean Hours per Week") +
+  ggtitle("Mean Hours per Week vs. Age")
+
+lg_hpw <- lapply(levels(adult$income), function(v){
+  df <- subset(adult, adult$income == v)  
+  df <- within(df, hours_w <- factor(hours_w, levels = names(sort(table(hours_w), decreasing = TRUE))))
+  ggplot(data = df, aes(x = hours_w, fill = hours_w)) + 
+    geom_bar(aes(y = (..count..)/sum(..count..))) +
+    geom_text(aes(label = scales::percent((..count..)/sum(..count..)),
+                  y = (..count..)/sum(..count..) ), 
+              stat = "count", vjust = -.1, size = 3) +
+    labs(x = "Hours per week", y = "", fill = "Hours per week") +
+    theme(legend.position = 'none', axis.text.x = element_text(angle = 45, hjust = 1)) +
+    ggtitle(paste("Income", v, sep="")) + 
+    scale_y_continuous(labels = percent) })
+grid.arrange(grobs = lg_hpw, ncol = 2)
+
+```
+
+```{r}
+# native_region
+adult$native_region <- factor(adult$native_region, 
+                                 levels = names(sort(table(adult$native_region), decreasing = TRUE)))
+ggplot(adult, aes(x = adult$native_region, fill = adult$native_region)) + 
+  geom_bar(aes(y = (..count..)/sum(..count..))) +
+  geom_text(aes(label = scales::percent((..count..)/sum(..count..)),
+                y = (..count..)/sum(..count..) ), 
+            stat = "count", vjust = -.1) +
+  labs(x = "Region", y = "", fill = "Regions") +
+  theme(legend.position = 'none', axis.text.x = element_text(angle = 45, hjust = 1)) +  
+  scale_y_continuous(labels = percent)
+
+lp_region <- lapply(levels(adult$native_region), function(v){
+  df <- subset(adult, adult$native_region == v) 
+  ggplot(data = df, aes(x = income, fill = income)) + 
+    geom_bar(aes(y = (..count..)/sum(..count..))) +
+    geom_text(aes(label = scales::percent((..count..)/sum(..count..)),
+                  y = (..count..)/sum(..count..) ), 
+              stat = "count", vjust = c(2, -0.1), size = 4) +
+    labs(x = "Income", y = "", fill = "Income") + ggtitle(v) +    
+    theme(legend.position = 'none',
+          plot.title = element_text(size = 11, face = "bold")) +     
+    scale_y_continuous(labels = percent) })
+grid.arrange(grobs = lp_region[1:8], ncol = 4)
+
+```
+
+```{r}
+# Workclass
+adult$workclass <- factor(adult$workclass,levels = names(sort(table(adult$workclass),                                                    decreasing = TRUE)))
+ggplot(adult, aes(x = adult$workclass, fill = adult$workclass)) + 
+  geom_bar(aes(y = (..count..)/sum(..count..))) +
+  geom_text(aes(label = scales::percent((..count..)/sum(..count..)),
+                y = (..count..)/sum(..count..) ), 
+            stat = "count", vjust = -.1, size = 3.5) +
+  labs(x = "Employment type", y = "", fill = "Employment type") +
+  theme(legend.position = 'none',axis.text.x = element_text(angle = 45, hjust = 1)) +   
+  scale_y_continuous(labels = percent)
+
+modified.work <- levels(adult$workclass)
+modified.work <- modified.work[!is.element(modified.work, c("Never-worked", "Without-pay"))]
+
+lg.workclass.mod <- lapply(modified.work, function(v){
+  ggplot(data = subset(adult, adult$workclass == v), 
+         aes(x = subset(adult, adult$workclass == v)$income, 
+             fill = subset(adult, adult$workclass == v)$income)) +
+    geom_bar(aes(y = (..count..)/sum(..count..))) +
+    geom_text(aes(label = scales::percent((..count..)/sum(..count..)),
+                  y = (..count..)/sum(..count..) ), stat = "count", vjust = c(2, 1.5)) +
+    labs(x = "Income", y = "", fill = "Income") + ggtitle(v) +  
+    theme(legend.position = 'none',
+          plot.title = element_text(size = 11, face = "bold")) +
+    scale_y_continuous(labels = percent) })
+grid.arrange(grobs = lg.workclass.mod[1:6], ncol = 2)
+
+```
+
+```{r}
+# education
+summary(adult$education)
+adult$education <- factor(adult$education, 
+                             levels = names(sort(table(adult$education), decreasing = TRUE)))
+ggplot(adult, aes(x = adult$education, fill = adult$education)) + 
+  geom_bar(aes(y = (..count..)/sum(..count..))) +
+  geom_text(aes(label = scales::percent((..count..)/sum(..count..)),
+                y = (..count..)/sum(..count..) ), 
+            stat = "count",vjust = -.1, size = 3.5) +
+  labs(x = "Education", y = "",fill = "Education") +
+  theme(legend.position = 'none',axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_y_continuous(labels = percent)
+
+modified.edu <- levels(adult$education)
+modified.edu <- modified.edu[!is.element(modified.edu, " Preschool")]
+lg.mod.edu <- lapply(modified.edu, function(v){
+  ggplot(data = subset(adult, adult$education == v), 
+         aes(x = subset(adult, adult$education == v)$income, 
+             fill = subset(adult, adult$education == v)$income)) +
+    geom_bar(aes(y = (..count..)/sum(..count..))) +
+    geom_text(aes(label = scales::percent((..count..)/sum(..count..)),
+                  y = (..count..)/sum(..count..) ), 
+              stat = "count", vjust =  c(2, 0.5), size = 3) +
+    labs(x = "Income", y = "", fill = "Income") + ggtitle(v) +  
+    theme(legend.position = 'none',
+          plot.title = element_text(size = 11, face = "bold")) +    
+    scale_y_continuous(labels = percent) })
+grid.arrange(grobs = lg.mod.edu[1:15], ncol = 4)
+
+```
+
+```{r}
+# marital_status
+summary(adult$marital_status)
+adult$marital_status <- factor(adult$marital_status, 
+                                  levels = names(sort(table(adult$marital_status),decreasing = TRUE)))
+ggplot(adult, aes(x = adult$marital_status, fill = adult$marital_status)) + 
+  geom_bar(aes(y = (..count..)/sum(..count..))) +
+  geom_text(aes(label = scales::percent((..count..)/sum(..count..)),
+                y = (..count..)/sum(..count..) ), 
+            stat = "count", vjust = -.1, size = 3.5) +
+  labs(x = "Marital Status", y = "", fill = "Marital Status") +
+  theme(legend.position = 'none', axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_y_continuous(labels = percent)
+
+lp_marital <- lapply(levels(adult$marital_status), function(v){
+  ggplot(data = subset(adult, adult$marital_status == v),
+         aes(x = subset(adult, adult$marital_status == v)$income,
+             fill = subset(adult, adult$marital_status == v)$income)) +   
+    geom_bar(aes(y = (..count..)/sum(..count..))) +
+    geom_text(aes(label = scales::percent((..count..)/sum(..count..)),
+                  y = (..count..)/sum(..count..) ),
+              stat = "count", vjust = c(2, -0.1)) +
+    labs(x = "Income", y = "", fill = "Income") + ggtitle(v) +
+    theme(legend.position = 'none',
+          plot.title = element_text(size = 11, face = "bold")) +
+    scale_y_continuous(labels = percent) })
+
+grid.arrange(grobs = lp_marital[1:7], ncol = 4)
+```
+
+```{r}
+# race
+summary(adult$race) 
+adult$race <- factor(adult$race, levels = names(sort(table(adult$race), decreasing = TRUE)))
+ggplot(adult, aes(x = adult$race, fill = adult$race)) + 
+  geom_bar(aes(y = (..count..)/sum(..count..))) +
+  geom_text(aes(label = scales::percent((..count..)/sum(..count..)),
+                y = (..count..)/sum(..count..) ), 
+            stat = "count",
+            vjust = c(-0.2, -0.2, -0.2, -0.2, 3)) +
+  labs(x = "Race", y = "", fill = "Race") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +  
+  scale_y_continuous(labels = percent)
+
+lg.race <- lapply(levels(adult$race), function(v){
+  ggplot(data = subset(adult, adult$race == v), 
+         aes(x = subset(adult, adult$race == v)$income, 
+             fill = subset(adult, adult$race == v)$income)) + 
+    geom_bar(aes(y = (..count..)/sum(..count..))) +
+    geom_text(aes(label = scales::percent((..count..)/sum(..count..)),
+                  y = (..count..)/sum(..count..) ), 
+              stat = "count", vjust = c(2, -0.1)) +
+    labs(x = "Income", y = "", fill = "Income") +
+    ggtitle(paste(v)) +  
+    theme(legend.position = 'none', plot.title = element_text(size = 11, face = "bold")) +     
+    scale_y_continuous(labels = percent) })
+grid.arrange(grobs = lg.race, ncol = 3)
+```
+
+```{r}
+# sex
+summary(adult$sex)
+gender.income <- lapply(levels(adult$sex), function(v){
+  ggplot(data = subset(adult, adult$sex == v), 
+         aes(x = subset(adult, adult$sex == v)$income, 
+             fill = subset(adult, adult$sex == v)$income))+
+    geom_bar(aes(y = (..count..)/sum(..count..))) +
+    geom_text(aes(label = scales::percent((..count..)/sum(..count..)),
+                  y = (..count..)/sum(..count..) ), 
+              stat = "count", vjust = -0.1, size = 3) +
+    labs(x = "Income", y = "", fill = "Income") + ggtitle(paste(v)) +  
+    theme(legend.position = 'none',
+          plot.title = element_text(size = 11, face = "bold"),
+          axis.text.x = element_text(hjust = 1)) +     
+    scale_y_continuous(labels = percent) })
+grid.arrange(grobs = gender.income, ncol = 2)
+```
+
+######################
+# Train/Test Dataset #
+######################
+
+```{r}
+library("caTools")
+set.seed(123)
+
+split = sample.split(adult,SplitRatio = .7)
+train = subset(adult,split == TRUE)
+test  = subset(adult,split == FALSE)
+```
+
+#######################
+# Predictive Analysis #
+#######################
+
+```{r}
+# Logistic Regression
+
+library(caret)
+covariates <- paste("age", "workclass", "education", "education_num",
+                    "marital_status", "occupation", "relationship",
+                    "race", "sex", "native_region", "hours_w",
+                    "cap_gain", "cap_loss", sep = "+")
+
+form <- as.formula(paste("income ~", covariates))
+start_time <- proc.time()
+glm.model <- glm(formula = form,
+                 data = train, 
+                 family = binomial(link = "logit"),
+                 x = TRUE)
+time.logistic <- proc.time() - start_time
+time.logistic
+summary(glm.model)
+```
+```{r}
+# training data performance
+log.predicted.train <- predict(glm.model, newdata = train, type = "response") 
+log.predicted.train <- ifelse(log.predicted.train > 0.5, ">50K", "<=50K")
+mean(log.predicted.train == train$income)
+
+log.predicted.train = as.factor(log.predicted.train)
+
+stat.log.train <- confusionMatrix(data = log.predicted.train, 
+                                 reference = train$income,
+                                 positive = levels(train$income)[2])
+stat.log.train
+
+# test data performance
+log.predicted.test.prob <- predict(glm.model, newdata = test, type = "response") 
+log.predicted.test <- ifelse(log.predicted.test.prob > 0.5, ">50K", "<=50K")
+mean(log.predicted.test == test$income)
+
+log.predicted.test = as.factor(log.predicted.test)
+
+stat.log.test <- confusionMatrix(data = log.predicted.test, 
+                                 reference = test$income,
+                                 positive = levels(test$income)[2])
+stat.log.test
+```
+
+```{r}
+# Random Forest
+library(randomForest)
+start_time <- proc.time()
+ModRF <- randomForest(formula = form, data = train)
+time.rf <- proc.time() - start_time
+time.rf
+ModRF
+plot(ModRF)
+
+# training data performance
+rf.predicted.train = predict(ModRF, newdata = train)
+stat.rf.train <- confusionMatrix(data = rf.predicted.train,
+                                  reference = train$income,
+                                  positive = levels(train$income)[2])
+stat.rf.train
+
+# test data performance
+rf.predicted.test = predict(ModRF, newdata = test, type="response")
+rf_pred_prob <-predict(ModRF, newdata = test,type="prob")[,2]
+stat.rf.test <- confusionMatrix(data = rf.predicted.test,
+                              reference = test$income,
+                              positive = levels(test$income)[2])
+stat.rf.test
+
+```
+
+```{r}
+# Support Vector Machines - linear kernel
+library(e1071)
+start_time <- proc.time()
+ModSVM.lin <- svm(form, data = train,  kernel = "linear", cost = 1)
+time.svm.lin <- proc.time() - start_time
+time.svm.lin
+
+# training data performance
+predSVM.lin <- predict(ModSVM.lin, newdata = train)
+
+stat.svmLin.train <- confusionMatrix(data = predSVM.lin, 
+                                    reference = train$income,
+                                    positive = levels(train$income)[2])
+
+stat.svmLin.train
+
+# test data performance
+predSVM.lin.test <- predict(ModSVM.lin, newdata = test)
+svm_dv<-as.numeric(attr(predict(ModSVM.lin, test, decision.values = TRUE),"decision.values"))
+stat.svmLin.test <- confusionMatrix(data = predSVM.lin.test, 
+                                     reference = test$income,
+                                     positive = levels(test$income)[2])
+
+stat.svmLin.test
+
+```
+
+```{r}
+# Support Vector Machines - radial kernel
+start_time <- proc.time()
+ModSVM <- svm(form, data = train)
+time.svm <- proc.time() - start_time
+time.svm
+
+# training data performance
+predSVM <- predict(ModSVM, newdata = train)
+stat.svmRad.train <- confusionMatrix(data = predSVM, 
+                                    reference = train$income,
+                                    positive = levels(train$income)[2])
+
+stat.svmRad.train
+
+# test data performance
+predSVM.test <- predict(ModSVM, newdata = test)
+svm_dv2<-as.numeric(attr(predict(ModSVM, test, decision.values = TRUE),"decision.values"))
+stat.svmRad.test <- confusionMatrix(data = predSVM.test, 
+                                     reference = test$income,
+                                     positive = levels(test$income)[2])
+
+stat.svmRad.test
+
+```
+
+```{r}
+# Neural Networks
+library(nnet)
+start_time <- proc.time()
+neural.fit <- nnet(formula = form,
+                   data = train,
+                   size = 12,
+                   decay = 2,
+                   maxit = 500,
+                   trace = FALSE)
+time.nn <- proc.time() - start_time
+time.nn
+
+# training data
+nn.predicted.train <- predict(neural.fit, newdata = train, type = "class")
+nn.predicted.train <- as.factor(nn.predicted.train)
+stat.nnet.train <- confusionMatrix(data = nn.predicted.train, 
+                                  reference = train$income,
+                                  positive = levels(train$income)[2])
+stat.nnet.train
+
+# test data
+nn.predicted.test <- predict(neural.fit, newdata = test, type = "class")
+nn_pred_prob <-predict(neural.fit, newdata = test, type = "raw")
+nn.predicted.test <- as.factor(nn.predicted.test)
+
+stat.nnet.test <- confusionMatrix(data = nn.predicted.test, 
+                                  reference = test$income,
+                                  positive = levels(test$income)[2])
+stat.nnet.test
+```
+
+```{r}
+# ROC
+library(pROC)
+log_roc<-roc(test$income,log.predicted.test.prob,auc=TRUE)
+plot(log_roc,print.auc=TRUE,col="orange")
+
+rf_roc<-roc(test$income,rf_pred_prob,auc=TRUE)
+plot(rf_roc,print.auc=TRUE,print.auc.y=.1, col="blue", add=TRUE)
+
+svmlin_roc<-roc(test$income,svm_dv,auc=TRUE)
+plot(svmlin_roc,print.auc=TRUE,print.auc.y=.4,col="green", add=TRUE)
+
+svm_roc<-roc(test$income, svm_dv2,auc=TRUE)
+plot(svm_roc,print.auc=TRUE,print.auc.y=.3, col="red",add=TRUE)
+
+nn_roc<-roc(test$income,nn_pred_prob,auc=TRUE)
+plot(nn_roc,print.auc=TRUE,print.auc.y=.2, col="black",add=TRUE)
+```
