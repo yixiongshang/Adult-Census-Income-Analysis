@@ -1,1 +1,1 @@
-# Adult-Census-Income-Analysis
+ Adult Census Income Project is researching on the adult census data extracted from the 1994 Census Bureau database by Ronny Kohavi and Barry Becker. The project would like to understand the correlation between census information and the people’s income level. Interpretability is a crucial issue in data mining applications, and the project strives to build statistical models on the given data and provide interpretations to describe the motifs behind the data set.
